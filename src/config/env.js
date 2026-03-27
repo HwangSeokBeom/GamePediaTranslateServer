@@ -5,12 +5,60 @@ const dotenv = require('dotenv');
 const DEFAULT_PAPAGO_ENDPOINT =
   'https://papago.apigw.ntruss.com/nmt/v1/translation';
 const DEFAULT_PAPAGO_TIMEOUT_MS = 5000;
-const envFilePath = path.resolve(process.cwd(), '.env');
-const envFileLoaded = fs.existsSync(envFilePath);
+const DEFAULT_NODE_ENV = 'development';
+const baseEnvFilePath = path.resolve(process.cwd(), '.env');
 
-if (envFileLoaded) {
-  dotenv.config({ path: envFilePath });
+function resolveNodeEnv() {
+  return process.env.NODE_ENV?.trim() || DEFAULT_NODE_ENV;
 }
+
+function loadEnvFile(filePath, initialEnvKeys, { overrideLoadedValues = false } = {}) {
+  if (!fs.existsSync(filePath)) {
+    return false;
+  }
+
+  const parsedEnv = dotenv.parse(fs.readFileSync(filePath));
+
+  Object.entries(parsedEnv).forEach(([name, value]) => {
+    if (initialEnvKeys.has(name)) {
+      return;
+    }
+
+    if (!overrideLoadedValues && Object.prototype.hasOwnProperty.call(process.env, name)) {
+      return;
+    }
+
+    process.env[name] = value;
+  });
+
+  return true;
+}
+
+const initialEnvKeys = new Set(Object.keys(process.env));
+const nodeEnv = resolveNodeEnv();
+const environmentEnvFilePath = path.resolve(process.cwd(), `.env.${nodeEnv}`);
+const loadedEnvFilePaths = [];
+
+if (loadEnvFile(baseEnvFilePath, initialEnvKeys)) {
+  loadedEnvFilePaths.push(baseEnvFilePath);
+}
+
+if (
+  loadEnvFile(environmentEnvFilePath, initialEnvKeys, {
+    overrideLoadedValues: true,
+  })
+) {
+  loadedEnvFilePaths.push(environmentEnvFilePath);
+}
+
+if (!process.env.NODE_ENV) {
+  process.env.NODE_ENV = nodeEnv;
+}
+
+const envFileLoaded = loadedEnvFilePaths.length > 0;
+const envFilePath = envFileLoaded
+  ? loadedEnvFilePaths.join(', ')
+  : [baseEnvFilePath, environmentEnvFilePath].join(', ');
 
 function readString(name) {
   return process.env[name]?.trim() || '';
@@ -36,10 +84,14 @@ function getServerPort() {
 }
 
 const env = {
+  nodeEnv: readString('NODE_ENV') || nodeEnv,
   envFilePath,
   envFileLoaded,
+  envFileCandidates: [baseEnvFilePath, environmentEnvFilePath],
+  loadedEnvFilePaths,
   serverHost: readString('HOST') || '0.0.0.0',
   serverPort: getServerPort(),
+  libreTranslateUrl: readString('LIBRETRANSLATE_URL'),
   papagoClientId: readString('PAPAGO_CLIENT_ID'),
   papagoClientSecret: readString('PAPAGO_CLIENT_SECRET'),
   papagoEndpoint: readString('PAPAGO_ENDPOINT') || DEFAULT_PAPAGO_ENDPOINT,
@@ -64,7 +116,9 @@ function buildStartupWarnings(config) {
 
   if (!config.envFileLoaded) {
     warnings.push(
-      '.env file not found; relying on process environment for configuration.'
+      `No env file found for NODE_ENV=${config.nodeEnv}; checked ${config.envFileCandidates.join(
+        ', '
+      )}. Relying on process environment for configuration.`
     );
   }
 
