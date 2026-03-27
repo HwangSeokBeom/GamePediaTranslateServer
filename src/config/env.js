@@ -6,59 +6,28 @@ const DEFAULT_PAPAGO_ENDPOINT =
   'https://papago.apigw.ntruss.com/nmt/v1/translation';
 const DEFAULT_PAPAGO_TIMEOUT_MS = 5000;
 const DEFAULT_NODE_ENV = 'development';
-const baseEnvFilePath = path.resolve(process.cwd(), '.env');
+const fallbackEnvFilePath = path.resolve(process.cwd(), '.env');
 
 function resolveNodeEnv() {
   return process.env.NODE_ENV?.trim() || DEFAULT_NODE_ENV;
 }
 
-function loadEnvFile(filePath, initialEnvKeys, { overrideLoadedValues = false } = {}) {
-  if (!fs.existsSync(filePath)) {
-    return false;
-  }
-
-  const parsedEnv = dotenv.parse(fs.readFileSync(filePath));
-
-  Object.entries(parsedEnv).forEach(([name, value]) => {
-    if (initialEnvKeys.has(name)) {
-      return;
-    }
-
-    if (!overrideLoadedValues && Object.prototype.hasOwnProperty.call(process.env, name)) {
-      return;
-    }
-
-    process.env[name] = value;
-  });
-
-  return true;
-}
-
-const initialEnvKeys = new Set(Object.keys(process.env));
 const nodeEnv = resolveNodeEnv();
 const environmentEnvFilePath = path.resolve(process.cwd(), `.env.${nodeEnv}`);
-const loadedEnvFilePaths = [];
+const resolvedEnvFilePath = fs.existsSync(environmentEnvFilePath)
+  ? environmentEnvFilePath
+  : fallbackEnvFilePath;
+const envFileLoaded = fs.existsSync(resolvedEnvFilePath);
 
-if (loadEnvFile(baseEnvFilePath, initialEnvKeys)) {
-  loadedEnvFilePaths.push(baseEnvFilePath);
-}
-
-if (
-  loadEnvFile(environmentEnvFilePath, initialEnvKeys, {
-    overrideLoadedValues: true,
-  })
-) {
-  loadedEnvFilePaths.push(environmentEnvFilePath);
+if (envFileLoaded) {
+  dotenv.config({ path: resolvedEnvFilePath });
 }
 
 if (!process.env.NODE_ENV) {
   process.env.NODE_ENV = nodeEnv;
 }
 
-const envFileLoaded = loadedEnvFilePaths.length > 0;
-const envFilePath = envFileLoaded
-  ? loadedEnvFilePaths.join(', ')
-  : [baseEnvFilePath, environmentEnvFilePath].join(', ');
+const envFilePath = resolvedEnvFilePath;
 
 function readString(name) {
   return process.env[name]?.trim() || '';
@@ -87,8 +56,7 @@ const env = {
   nodeEnv: readString('NODE_ENV') || nodeEnv,
   envFilePath,
   envFileLoaded,
-  envFileCandidates: [baseEnvFilePath, environmentEnvFilePath],
-  loadedEnvFilePaths,
+  envFileCandidates: [environmentEnvFilePath, fallbackEnvFilePath],
   serverHost: readString('HOST') || '0.0.0.0',
   serverPort: getServerPort(),
   libreTranslateUrl: readString('LIBRETRANSLATE_URL'),
@@ -106,7 +74,8 @@ const env = {
   redisUrl: readString('REDIS_URL'),
   databaseUrl: readString('DATABASE_URL'),
   databaseSsl: readBoolean('DATABASE_SSL'),
-  translationCacheTtlSeconds: readString('TRANSLATION_CACHE_TTL_SECONDS'),
+  translationCacheTtlSeconds:
+    readString('TRANSLATION_CACHE_TTL_SECONDS') || readString('TRANSLATION_CACHE_TTL'),
 };
 
 env.startupWarnings = buildStartupWarnings(env);

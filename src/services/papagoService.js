@@ -1,10 +1,12 @@
 const env = require('../config/env');
+const { createLogger } = require('../utils/logger');
+const logger = createLogger({ component: 'papago' });
 
-console.log(`[Papago] endpoint: ${env.papagoEndpoint}`);
-console.log(`[Papago] client id loaded: ${env.papagoClientId ? 'yes' : 'no'}`);
-console.log(
-  `[Papago] client secret loaded: ${env.papagoClientSecret ? 'yes' : 'no'}`
-);
+logger.info('papago config loaded', {
+  endpoint: env.papagoEndpoint,
+  clientIdLoaded: Boolean(env.papagoClientId),
+  clientSecretLoaded: Boolean(env.papagoClientSecret),
+});
 
 function createSkippedResult(originalText, reason) {
   return {
@@ -24,7 +26,11 @@ function buildHeaders() {
 
 async function translateText({ text, sourceLanguage, targetLanguage }) {
   if (!env.papagoClientId || !env.papagoClientSecret) {
-    console.log('[Papago] missing credentials');
+    logger.warn('papago request skipped', {
+      reason: 'missing_credentials',
+      sourceLanguage,
+      targetLanguage,
+    });
     return createSkippedResult(text, 'missing_credentials');
   }
 
@@ -35,13 +41,12 @@ async function translateText({ text, sourceLanguage, targetLanguage }) {
     text,
   });
 
-  console.log('[Papago] request');
-  console.log(`[Papago] source language: ${sourceLanguage}`);
-  console.log(`[Papago] target language: ${targetLanguage}`);
-  console.log(`[Papago] text length: ${text.length}`);
-  console.log(
-    `[Papago] request header keys: ${Object.keys(headers).join(', ')}`
-  );
+  logger.info('papago request start', {
+    sourceLanguage,
+    targetLanguage,
+    textLength: text.length,
+    requestHeaderKeys: Object.keys(headers),
+  });
 
   const abortController = new AbortController();
   const timeoutId = setTimeout(
@@ -51,7 +56,6 @@ async function translateText({ text, sourceLanguage, targetLanguage }) {
 
   let response;
   let responseBodyText = '';
-  let responseHeaders = {};
 
   try {
     response = await fetch(env.papagoEndpoint, {
@@ -61,22 +65,35 @@ async function translateText({ text, sourceLanguage, targetLanguage }) {
       signal: abortController.signal,
     });
 
-    responseHeaders = Object.fromEntries(response.headers.entries());
     responseBodyText = await response.text();
   } catch (error) {
     const reason =
       error.name === 'AbortError' ? 'papago_timeout' : 'papago_unavailable';
-    console.error('[Papago] request failed', error.message);
+    logger.error('papago request failed', {
+      reason,
+      sourceLanguage,
+      targetLanguage,
+      textLength: text.length,
+      error,
+    });
     return createSkippedResult(text, reason);
   } finally {
     clearTimeout(timeoutId);
   }
 
-  console.log(`[Papago] response status: ${response.status}`);
-  console.log(`[Papago] response headers: ${JSON.stringify(responseHeaders)}`);
-  console.log(`[Papago] response body: ${responseBodyText || '[empty]'}`);
+  logger.info('papago response received', {
+    statusCode: response.status,
+    sourceLanguage,
+    targetLanguage,
+  });
 
   if (!response.ok) {
+    logger.warn('papago request failed', {
+      reason: 'papago_http_error',
+      statusCode: response.status,
+      sourceLanguage,
+      targetLanguage,
+    });
     return createSkippedResult(text, 'papago_http_error');
   }
 
@@ -85,7 +102,12 @@ async function translateText({ text, sourceLanguage, targetLanguage }) {
   try {
     parsedBody = responseBodyText ? JSON.parse(responseBodyText) : null;
   } catch (error) {
-    console.error('[Papago] invalid json response');
+    logger.error('papago request failed', {
+      reason: 'papago_invalid_response',
+      sourceLanguage,
+      targetLanguage,
+      error,
+    });
     return createSkippedResult(text, 'papago_invalid_response');
   }
 
@@ -95,7 +117,11 @@ async function translateText({ text, sourceLanguage, targetLanguage }) {
     typeof translatedText !== 'string' ||
     translatedText.trim().length === 0
   ) {
-    console.error('[Papago] malformed response');
+    logger.error('papago request failed', {
+      reason: 'papago_malformed_response',
+      sourceLanguage,
+      targetLanguage,
+    });
     return createSkippedResult(text, 'papago_malformed_response');
   }
 

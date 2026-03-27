@@ -1,10 +1,12 @@
 const translationRepository = require("../repositories/translationRepository");
 const normalizeText = require("../utils/normalizeText");
+const { createLogger } = require("../utils/logger");
 const cacheService = require("./cacheService");
 const papagoService = require("./papagoService");
 const usageLimiterService = require("./usageLimiterService");
 
 const inFlightRequests = new Map();
+const logger = createLogger({ component: "translation" });
 
 function createSkippedResponse(originalText, reason) {
   return {
@@ -21,12 +23,13 @@ function logTranslationOutcome({
   skipped,
   reason = "none",
 }) {
-  console.log(
-    `[Translation] sourceLanguage=${sourceLanguage} targetLanguage=${targetLanguage}`
-  );
-  console.log(`[Translation] provider selected=${provider}`);
-  console.log(`[Translation] skipped=${skipped ? "true" : "false"}`);
-  console.log(`[Translation] fallback reason=${reason}`);
+  logger.info("translation outcome", {
+    sourceLanguage,
+    targetLanguage,
+    provider,
+    skipped,
+    reason,
+  });
 }
 
 async function translateText({
@@ -38,14 +41,21 @@ async function translateText({
 }) {
   const normalizedText = normalizeText(text);
 
-  console.log(`[Translation] request length=${normalizedText.length}`);
-  console.log(
-    `[Translation] sourceLanguage=${sourceLanguage} targetLanguage=${targetLanguage}`
-  );
+  logger.info("translation request start", {
+    sourceLanguage,
+    targetLanguage,
+    routePath,
+    fieldName,
+    textLength: normalizedText.length,
+  });
 
   if (normalizedText.length === 0) {
-    console.log("[Papago Fallback]");
-    console.log("reason: empty_text");
+    logger.warn("translation provider failure", {
+      provider: "none",
+      sourceLanguage,
+      targetLanguage,
+      reason: "empty_text",
+    });
     logTranslationOutcome({
       sourceLanguage,
       targetLanguage,
@@ -70,20 +80,30 @@ async function translateText({
   try {
     cachedTranslation = await cacheService.getTranslation(cacheKey);
   } catch (error) {
-    console.error("[Translation] redis unavailable fallback", error.message);
+    logger.warn("translation cache unavailable", {
+      cacheKey,
+      error,
+    });
   }
 
   if (typeof cachedTranslation === "string" && cachedTranslation.trim().length > 0) {
-    console.log("[Cache Hit]");
-    console.log(`key: ${cacheKey}`);
+    logger.info("translation cache hit", {
+      cacheKey,
+      cacheSource: "redis",
+      sourceLanguage,
+      targetLanguage,
+    });
     return {
       translatedText: cachedTranslation,
       cached: true,
     };
   }
 
-  console.log("[Cache Miss]");
-  console.log(`key: ${cacheKey}`);
+  logger.info("translation cache miss", {
+    cacheKey,
+    sourceLanguage,
+    targetLanguage,
+  });
 
   let storedTranslation = null;
 
@@ -103,8 +123,12 @@ async function translateText({
     storedTranslation.translatedText.trim().length > 0
   ) {
     await cacheService.setTranslation(cacheKey, storedTranslation.translatedText);
-    console.log("[Cache Hit]");
-    console.log(`key: ${cacheKey}`);
+    logger.info("translation cache hit", {
+      cacheKey,
+      cacheSource: "database",
+      sourceLanguage,
+      targetLanguage,
+    });
     return {
       translatedText: storedTranslation.translatedText,
       cached: true,
@@ -122,7 +146,6 @@ async function translateText({
       provider: "identity",
     });
 
-    console.log("[Translation] translation success");
     logTranslationOutcome({
       sourceLanguage,
       targetLanguage,
@@ -136,7 +159,11 @@ async function translateText({
   }
 
   if (inFlightRequests.has(cacheKey)) {
-    console.log("[Translation] in-flight reuse");
+    logger.debug("translation in-flight reuse", {
+      cacheKey,
+      sourceLanguage,
+      targetLanguage,
+    });
     return inFlightRequests.get(cacheKey);
   }
 
@@ -199,8 +226,13 @@ async function executeTranslation({
   });
 
   if (!accessCheck.allowed && accessCheck.reason !== "usage_tracking_unavailable") {
-    console.log("[Papago Blocked]");
-    console.log(`reason: ${accessCheck.reason}`);
+    logger.warn("translation provider failure", {
+      provider: "papago",
+      sourceLanguage,
+      targetLanguage,
+      reason: accessCheck.reason,
+      stage: "precheck",
+    });
     logTranslationOutcome({
       sourceLanguage,
       targetLanguage,
@@ -211,11 +243,12 @@ async function executeTranslation({
     return createSkippedResponse(text, accessCheck.reason);
   }
 
-  console.log("[Papago Request]");
-  console.log(`textLength: ${normalizedText.length}`);
-  console.log(
-    `[Translation] provider selected=papago sourceLanguage=${sourceLanguage} targetLanguage=${targetLanguage}`
-  );
+  logger.info("translation provider selected", {
+    provider: "papago",
+    sourceLanguage,
+    targetLanguage,
+    textLength: normalizedText.length,
+  });
 
   const papagoResult = await papagoService.translateText({
     text: normalizedText,
@@ -224,8 +257,13 @@ async function executeTranslation({
   });
 
   if (papagoResult.translationSkipped) {
-    console.log("[Papago Fallback]");
-    console.log(`reason: ${papagoResult.reason}`);
+    logger.warn("translation provider failure", {
+      provider: "papago",
+      sourceLanguage,
+      targetLanguage,
+      reason: papagoResult.reason,
+      stage: "provider_response",
+    });
     logTranslationOutcome({
       sourceLanguage,
       targetLanguage,
@@ -242,8 +280,13 @@ async function executeTranslation({
       : "";
 
   if (!translatedText) {
-    console.log("[Papago Fallback]");
-    console.log("reason: empty_translation");
+    logger.warn("translation provider failure", {
+      provider: "papago",
+      sourceLanguage,
+      targetLanguage,
+      reason: "empty_translation",
+      stage: "provider_response",
+    });
     logTranslationOutcome({
       sourceLanguage,
       targetLanguage,
@@ -254,9 +297,6 @@ async function executeTranslation({
     return createSkippedResponse(text, "empty_translation");
   }
 
-  console.log("[Papago Response]");
-  console.log(`translatedLength: ${translatedText.length}`);
-  console.log("[Papago Success]");
   logTranslationOutcome({
     sourceLanguage,
     targetLanguage,
@@ -305,7 +345,12 @@ async function saveTranslation({
       provider,
     });
   } catch (error) {
-    console.error("[Translation] db save skipped", error.message);
+    logger.warn("translation persistence skipped", {
+      sourceLanguage,
+      targetLanguage,
+      provider,
+      error,
+    });
   }
 
   await cacheService.setTranslation(cacheKey, translatedText);

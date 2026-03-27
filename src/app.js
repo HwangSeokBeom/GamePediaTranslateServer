@@ -2,6 +2,7 @@ const os = require('os');
 const express = require('express');
 
 const env = require('./config/env');
+const { createLogger } = require('./utils/logger');
 const {
   connectDatabase,
   closeDatabase,
@@ -15,6 +16,7 @@ const translationRequestPaths = new Set([
   '/translations/text',
   '/translations/batch',
 ]);
+const logger = createLogger({ component: 'server' });
 
 function getLanAddress() {
   const networkInterfaces = os.networkInterfaces();
@@ -77,18 +79,17 @@ function getTranslationRequestDetails(req) {
   };
 }
 
-function logTranslationRequest(message, req, details, extra = '') {
-  const logLine =
-    `[Translation Request] ${message}` +
-    ` method=${req.method}` +
-    ` path=${req.originalUrl}` +
-    ` ip=${getRequestIp(req)}` +
-    ` targetLanguage=${details.targetLanguage || 'missing'}` +
-    ` textLength=${details.textLength}` +
-    (details.textCount > 1 ? ` textCount=${details.textCount}` : '') +
-    extra;
-
-  console.log(logLine);
+function logTranslationRequest(event, req, details, extra = {}) {
+  logger.info('translation request', {
+    event,
+    method: req.method,
+    path: req.originalUrl,
+    ip: getRequestIp(req),
+    targetLanguage: details.targetLanguage || 'missing',
+    textLength: details.textLength,
+    ...(details.textCount > 1 ? { textCount: details.textCount } : {}),
+    ...extra,
+  });
 }
 
 function getLanAccessExample(host, port) {
@@ -131,7 +132,10 @@ function createApp() {
         outcome,
         req,
         requestDetails,
-        ` status=${res.statusCode} durationMs=${durationMs}`
+        {
+          statusCode: res.statusCode,
+          durationMs,
+        }
       );
     });
 
@@ -165,7 +169,10 @@ function createApp() {
           'failure',
           req,
           getTranslationRequestDetails(req),
-          ' status=400 reason=invalid_json'
+          {
+            statusCode: 400,
+            reason: 'invalid_json',
+          }
         );
       }
 
@@ -184,7 +191,12 @@ function createApp() {
         : error.message;
 
     if (statusCode >= 500) {
-      console.error('[Server Error]', error.message);
+      logger.error('server error', {
+        statusCode,
+        errorCode,
+        path: req.originalUrl,
+        error,
+      });
     }
 
     res.status(statusCode).json({
@@ -197,20 +209,19 @@ function createApp() {
 }
 
 async function startServer() {
-  console.log(`[Startup] env file: ${env.envFilePath}`);
-  console.log(`[Startup] env file loaded: ${env.envFileLoaded ? 'yes' : 'no'}`);
-  console.log(
-    `[Startup] DATABASE_URL loaded: ${env.databaseUrl ? 'yes' : 'no'}`
-  );
-  console.log(`[Startup] REDIS_URL loaded: ${env.redisUrl ? 'yes' : 'no'}`);
-  console.log(
-    `[Startup] PAPAGO credentials loaded: ${
-      env.papagoClientId && env.papagoClientSecret ? 'yes' : 'no'
-    }`
-  );
+  logger.info('server startup', {
+    nodeEnv: env.nodeEnv,
+    envFilePath: env.envFilePath,
+    envFileLoaded: env.envFileLoaded,
+    databaseUrlLoaded: Boolean(env.databaseUrl),
+    redisUrlLoaded: Boolean(env.redisUrl),
+    papagoCredentialsLoaded: Boolean(
+      env.papagoClientId && env.papagoClientSecret
+    ),
+  });
 
   env.startupWarnings.forEach((warning) => {
-    console.warn(`[Startup] warning: ${warning}`);
+    logger.warn('startup warning', { warning });
   });
 
   await connectDatabase();
@@ -218,16 +229,12 @@ async function startServer() {
 
   const app = createApp();
   const server = app.listen(env.serverPort, env.serverHost, () => {
-    console.log('[Startup] Translation server running');
-    console.log(`[Startup] host: ${env.serverHost}`);
-    console.log(`[Startup] port: ${env.serverPort}`);
-    console.log(`[Startup] local access: http://localhost:${env.serverPort}/health`);
-    console.log(
-      `[Startup] LAN access example: ${getLanAccessExample(
-        env.serverHost,
-        env.serverPort
-      )}`
-    );
+    logger.info('server listening', {
+      host: env.serverHost,
+      port: env.serverPort,
+      localAccess: `http://localhost:${env.serverPort}/health`,
+      lanAccessExample: getLanAccessExample(env.serverHost, env.serverPort),
+    });
   });
 
   const shutdown = async () => {
@@ -245,7 +252,7 @@ async function startServer() {
 
 if (require.main === module) {
   startServer().catch((error) => {
-    console.error('[Startup] failed', error.message);
+    logger.error('server startup failed', { error });
     process.exit(1);
   });
 }
