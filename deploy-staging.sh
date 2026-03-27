@@ -3,12 +3,12 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-BRANCH_NAME="main"
-APP_NAME="translate-server"
-ENV_NAME="production"
+BRANCH_NAME="staging"
+APP_NAME="translate-server-staging"
+ENV_NAME="staging"
 
 log() {
-  printf '[deploy] %s\n' "$1"
+  printf '[deploy-staging] %s\n' "$1"
 }
 
 log "Moving to project directory: ${PROJECT_DIR}"
