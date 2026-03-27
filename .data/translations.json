@@ -1,0 +1,13 @@
+[
+  {
+    "id": "2ccf0e2b-2d6a-4c38-b72e-1c99a9b1cb50",
+    "normalizedSourceText": "Same language passthrough",
+    "sourceText": "Same language passthrough",
+    "sourceLanguage": "en",
+    "targetLanguage": "en",
+    "translatedText": "Same language passthrough",
+    "provider": "identity",
+    "createdAt": "2026-03-24T10:44:07.305Z",
+    "updatedAt": "2026-03-24T10:44:07.305Z"
+  }
+]

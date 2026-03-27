@@ -1,0 +1,21 @@
+{
+  "name": "translation-proxy-server",
+  "version": "1.0.0",
+  "description": "Node.js Express translation proxy backed by Papago Translation API",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "node src/app.js",
+    "migrate": "node src/db/migrate.js",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "import:local": "node scripts/importLocalTranslations.js"
+  },
+  "dependencies": {
+    "axios": "^1.13.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "pg": "^8.20.0",
+    "redis": "^4.7.1"
+  }
+}
